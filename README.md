@@ -56,11 +56,13 @@ syscall_set_pgfault_handler(u_int envid, u_int func, u_int xstacktop)
 ```
 这就又牵涉到一个问题,`syscall_x`和`sys_x`函数有什么关联和区别呢?  
       对于这个问题,笔者只能说,关联很沉重。实际上，在后面填写`fork.c`的时候,我们可以发现我们使用的函数全部都是`syscall_x`类的函数，而不使用`sys_x`类的函数。实际上根据我们上面的流程，调用关系是这样的：
-  + `fork.c`中调用`syscall_x`类的函数
-  + `syscall_x`调用`mysyscall`汇编函数
-  + `mysyscall`汇编函数中调用了`syscall`指令。
-  + `syscall`指令根据调用号选择`sys_x`类的函数
-填完系统调用后，就可以开始填写跟系统调用有关的`syscalltable`中德系统调用子函数了。在Lab4中这些子函数注释严重匮乏，所以要直接根据函数名补全是很难的，下面大概介绍一下这些函数有关的填写方法。
+```
+  + fork.c中调用syscall_x类的函数
+  + syscall_x调用mysyscall汇编函数
+  + mysyscall汇编函数中调用了syscall指令。
+  + syscall指令根据调用号选择sys_x类的函数
+```   
+填完系统调用后，就可以开始填写跟系统调用有关的`syscalltable`中的系统调用子函数了。在Lab4中这些子函数注释严重匮乏，所以要直接根据函数名补全是很难的，下面大概介绍一下这些函数有关的填写方法。
 ###sys_set_pgfault_handler###
 第一个要补全的函数是这个，先来看看MIT原生注释是怎样的：
 ```C
@@ -97,3 +99,4 @@ stack),然后转向处理函数 'func'。
 //	-E_NO_MEM if there's no memory to allocate the new page,
 //		or to allocate any necessary page tables.
 ```
+从上面这段注释里我们其实可以看到,`sys_mem_alloc`函数实际上是
