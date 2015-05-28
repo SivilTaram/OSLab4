@@ -11,3 +11,36 @@ BUAA OSLab4
   + 将用户态下的参数拷贝到内核中，根据第1个参数为索引寻找系统调用表`syscalltable`
   + 根据系统调用号在`syscalltable`中找到相应的函数后，转向对应函数处理
   + 处理完成后，回到用户态，系统调用完成。
+
+```C
+LEAF(msyscall)
+
+/////////////////////////////////////////
+//insert your code here
+//put the paramemters to the right pos
+//and then call the "syscall" instruction
+/////////////////////////////////////////
+//fmars:
+//j fmars
+  move v0,a0
+  sw a0,0(sp)
+  sw a1,4(sp)
+  sw a2,8(sp)
+  sw a3,12(sp)
+  syscall
+  jr ra
+
+
+END(msyscall)
+
+//move a0->v0
+//move a1-3 to stack
+
+```
+上面是我们这次要填写的`./user/syscall_wrap.S`函数，结合注释与我们上面的讲解，应该不难理解。实际上就是如下流程：1、设置`syscall`的参数；2、执行`syscall`;3、完成系统调用，返回<br>
+而在mips下有如下约定：<br>
+```
+v0         用于置系统调用号
+a0~a3      置前四个参数，后面的参数用栈传
+syscall    系统调用触发指令
+```
