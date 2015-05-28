@@ -46,7 +46,19 @@ v0         用于置系统调用号
 a0~a3      置前四个参数，后面的参数用栈传
 syscall    系统调用触发指令
 ```
-在这一阶段你可能存在的困惑是，在每个函数中出现的`int sysno`的参数究竟有什么用?实际上笔者认为这个参数并没有
+在这一阶段你可能存在的困惑是，在每个函数中出现的`int sysno`的参数究竟有什么用?实际上笔者认为这个参数并没有什么用处,不过笔者最后认为,`sysno`其实就是`a0`的值,其实也就是我们的系统调用号。我们可以在`./user/syscall_lib.c`里面看到其引用:
+```C
+int
+syscall_set_pgfault_handler(u_int envid, u_int func, u_int xstacktop)
+{
+        return msyscall(SYS_set_pgfault_handler,envid,func,xstacktop,0,0);
+}
+```
+这就又牵涉到一个问题,`syscall_x`和`sys_x`函数有什么关联和区别呢?  
+      对于这个问题,笔者只能说,关联很沉重。实际上，在后面填写`fork.c`的时候,我们可以发现我们使用的函数全部都是`syscall_x`类的函数，而不使用`sys_x`类的函数。实际上根据我们上面的流程，真正的调用顺序是这样的：
+      + 操作系统中调用`syscall_x`类的函数
+      + `syscall_x`调用`mysyscall`汇编函数
+      + `mysyscall`汇编函数中调用了`syscall`指令。指令的参数存在栈或者a0-a3寄存器中。
 填完系统调用后，就可以开始填写跟系统调用有关的`syscalltable`中德系统调用子函数了。在Lab4中这些子函数注释严重匮乏，所以要直接根据函数名补全是很难的，下面大概介绍一下这些函数有关的填写方法。
 ###sys_set_pgfault_handler###
 第一个要补全的函数是这个，先来看看MIT原生注释是怎样的：
@@ -55,7 +67,9 @@ syscall    系统调用触发指令
 // Env's 'env_pgfault_upcall' field.  When 'envid' causes a page fault, the
 // kernel will push a fault record onto the exception stack, then branch to
 // 'func'.
-//为envid所对应的进程控制块设立对应的缺页处理函数，通过修改进程控制块通信结构中的 'env_pgfault_upcall'区域 (在我们的实验中是 env_pgfault_handler )。当 envid 进程造成页缺失时，内核将会把页缺失记录入异常栈 (exception stack),然后转向处理函数 'func'。
+//为envid所对应的进程控制块设立对应的缺页处理函数，通过修改进程控制块通信结构中的 'env_pgfault_upcall'区域  
+(在我们的实验中是 env_pgfault_handler )。当 envid 进程造成页缺失时，内核将会把页缺失记录入异常栈 (exception  
+stack),然后转向处理函数 'func'。
 // Returns 0 on success, < 0 on error.  Errors are:
 //	-E_BAD_ENV if environment envid doesn't currently exist,
 //		or the caller doesn't have permission to change envid.
