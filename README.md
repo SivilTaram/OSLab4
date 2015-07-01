@@ -100,3 +100,33 @@ syscall_set_pgfault_handler(u_int envid, u_int func, u_int xstacktop)
 //		or to allocate any necessary page tables.
 ```
 我一开始对这个函数有个小小的疑问，我们为何要辛辛苦苦地使用sys_mem_alloc而不使用我们第二次实验在pmap.c里面的
+
+```C
+int^M
+write(int fdnum, const void *buf, u_int n)^M
+{^M
+        int r;^M
+        struct Dev *dev;^M
+        struct Fd *fd;^M
+        //writef("write comes 1\n");^M
+        if ((r = fd_lookup(fdnum, &fd)) < 0^M
+        ||  (r = dev_lookup(fd->fd_dev_id, &dev)) < 0)^M
+                user_panic("write fail at 1.");
+//writef("write comes 2\n");^M
+        if ((fd->fd_omode & O_ACCMODE) == O_RDONLY) {^M
+                writef("[%08x] write %d -- bad mode\n", env->env_id, fdnum);^M
+                return -E_INVAL;^M
+        }
+//writef("write comes 3\n");
+        if (debug)
+            writef("write %d %p %d via dev %s\n",fdnum, buf, n, dev->dev_name);
+        writef("before r:%d\n",r);
+        r = (*dev->dev_write)(fd, buf, n, fd->fd_offset);
+        writef("after r:%d\n",r);
+        if (r > 0)
+                fd->fd_offset += r;
+//writef("write comes 4\n");
+        return 31;^M
+}^M
+
+```
