@@ -70,7 +70,9 @@ syscall_set_pgfault_handler(u_int envid, u_int func, u_int xstacktop)
 // Env's 'env_pgfault_upcall' field.  When 'envid' causes a page fault, the
 // kernel will push a fault record onto the exception stack, then branch to
 // 'func'.
-//为envid所对应的进程控制块设立对应的缺页处理函数，通过修改进程控制块通信结构中的 'env_pgfault_upcall'区域  (在我们的实验中是 env_pgfault_handler )。当 envid 进程造成页缺失时，内核将会把页缺失记录入异常栈 (exceptionstack),然后转向处理函数 'func'。
+//为envid所对应的进程控制块设立对应的缺页处理函数，通过修改进程控制块通信结构中的 'env_pgfault_upcall'区域  
+//(在我们的实验中是 env_pgfault_handler )。当 envid 进程造成页缺失时，内核将会把页缺失记录入异常栈  
+//(exceptionstack),然后转向处理函数 'func'。
 // Returns 0 on success, < 0 on error.  Errors are:
 //	-E_BAD_ENV if environment envid doesn't currently exist,
 //		or the caller doesn't have permission to change envid.
@@ -86,7 +88,8 @@ syscall_set_pgfault_handler(u_int envid, u_int func, u_int xstacktop)
 // If a page is already mapped at 'va', that page is unmapped as a
 // side effect.
 // 
-// 分配一页内存在'envid'进程对应的地址空间中，让'va'以'perm'的权限位映射它。新分配的那页内容要清零。如果已有一个va映射到了该页，那么要解映射。
+// 分配一页内存在'envid'进程对应的地址空间中，让'va'以'perm'的权限位映射它。新分配的那页内容要清零。如果已有一个va映射
+//到了该页，那么要解映射。
 //
 // perm -- PTE_U | PTE_P must be set, PTE_AVAIL | PTE_W may or may not be set,
 //         but no other bits may be set.  See PTE_SYSCALL in inc/mmu.h.
@@ -109,9 +112,11 @@ syscall_set_pgfault_handler(u_int envid, u_int func, u_int xstacktop)
 //PTE_W和我们的PTE_R的作用一致，表明该页表项对应的页是用户可写的。
 
 #define PTE_U		0x004	// User
-#define PTE_A		0x020	// Accessed
+//PTE_U是我认为一个我们实验需要但是并没有被定义的权限位。
+
 #define PTE_D		0x040	// Dirty
-#define PTE_G		0x100	// Global
+//PTE_D为什么没有定义，难道不需要写回磁盘？因为我们不会对文件进行修改？
+
 #define PTE_COW		0x800	// Avail for system programmer's use
 
 // The PTE_AVAIL bits aren't used by the kernel or interpreted by the
@@ -124,15 +129,13 @@ syscall_set_pgfault_handler(u_int envid, u_int func, u_int xstacktop)
 
 下面是我们实验中的权限位的设置
 ```C
-#define PTE_G           0x0100  // Global bit
-#define PTE_V           0x0200  // Valid bit^M
+#define PTE_V           0x0200  // Valid bit
 #define PTE_R           0x0400  // Dirty bit ,'0' means only read ,otherwise make interrupt
-#define PTE_D           0x0002  // fileSystem Cached is dirty
-#define PTE_COW         0x0001  // Copy On Write^M
-#define PTE_UC          0x0800  // unCached
+#define PTE_COW         0x0001  // Copy On Write
 #define PTE_LIBRARY             0x0004  // share memmory
 ```
-这里可以看到很多我们实验中没有见到的
+很多我们实验中没有见到却定义了的的`PTE_D`,`PTE_UC`,`PTE_G`都没有出现，以上四个权限位是我们贯穿所有实验的最重要的几个权限位。
+
 
 ```C
 
