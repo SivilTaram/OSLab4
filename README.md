@@ -55,14 +55,14 @@ syscall_set_pgfault_handler(u_int envid, u_int func, u_int xstacktop)
 }
 ```
 这就又牵涉到一个问题,`syscall_x`和`sys_x`函数有什么关联和区别呢?  
-      对于这个问题,笔者只能说,关联很沉重。实际上，在后面填写`fork.c`的时候,我们可以发现我们使用的函数全部都是`syscall_x`类的函数，而不使用`sys_x`类的函数。实际上根据我们上面的流程，调用关系是这样的：
+      对于这个问题，实际上，在后面填写`fork.c`的时候,我们可以发现我们使用的函数全部都是`syscall_x`类的函数，而不使用`sys_x`类的函数。实际上根据我们上面的流程，调用关系是这样的：
 ```
-  + fork.c中调用syscall_x类的函数
-  + syscall_x调用mysyscall汇编函数
-  + mysyscall汇编函数中调用了syscall指令。
-  + syscall指令根据调用号选择sys_x类的函数
+  * fork.c中调用syscall_x类的函数
+  * syscall_x调用mysyscall汇编函数
+  * mysyscall汇编函数中调用了syscall特权指令。
+  * syscall指令根据调用号选择sys_x类的函数
 ```   
-填完系统调用后，就可以开始填写跟系统调用有关的`syscalltable`中的系统调用子函数了。在Lab4中这些子函数注释严重匮乏，所以要直接根据函数名补全是很难的，下面大概介绍一下这些函数有关的填写方法。
+填完系统调用后，就可以开始填写跟系统调用有关的`syscalltable`中的系统调用子函数了。在Lab4中这些子函数注释严重匮乏，所以我参考了MIT的JOS的注释来进行理解和填写。
 ###sys_set_pgfault_handler###
 第一个要补全的函数是这个，先来看看MIT原生注释是怎样的：
 ```C
@@ -70,9 +70,7 @@ syscall_set_pgfault_handler(u_int envid, u_int func, u_int xstacktop)
 // Env's 'env_pgfault_upcall' field.  When 'envid' causes a page fault, the
 // kernel will push a fault record onto the exception stack, then branch to
 // 'func'.
-//为envid所对应的进程控制块设立对应的缺页处理函数，通过修改进程控制块通信结构中的 'env_pgfault_upcall'区域  
-(在我们的实验中是 env_pgfault_handler )。当 envid 进程造成页缺失时，内核将会把页缺失记录入异常栈 (exception  
-stack),然后转向处理函数 'func'。
+//为envid所对应的进程控制块设立对应的缺页处理函数，通过修改进程控制块通信结构中的 'env_pgfault_upcall'区域  (在我们的实验中是 env_pgfault_handler )。当 envid 进程造成页缺失时，内核将会把页缺失记录入异常栈 (exceptionstack),然后转向处理函数 'func'。
 // Returns 0 on success, < 0 on error.  Errors are:
 //	-E_BAD_ENV if environment envid doesn't currently exist,
 //		or the caller doesn't have permission to change envid.
@@ -87,6 +85,8 @@ stack),然后转向处理函数 'func'。
 // The page's contents are set to 0.
 // If a page is already mapped at 'va', that page is unmapped as a
 // side effect.
+// 
+// 分配一页内存在'envid'进程对应的地址空间中，让'va'以'perm'的权限位映射它。新分配的那页内容要清零。如果已有一个va映射到了该页，那么要解映射。
 //
 // perm -- PTE_U | PTE_P must be set, PTE_AVAIL | PTE_W may or may not be set,
 //         but no other bits may be set.  See PTE_SYSCALL in inc/mmu.h.
@@ -99,4 +99,4 @@ stack),然后转向处理函数 'func'。
 //	-E_NO_MEM if there's no memory to allocate the new page,
 //		or to allocate any necessary page tables.
 ```
-从上面这段注释里我们其实可以看到,`sys_mem_alloc`函数实际上是
+我一开始对这个函数有个小小的疑问，我们为何要辛辛苦苦地使用sys_mem_alloc而不使用我们第二次实验在pmap.c里面的
