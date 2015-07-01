@@ -90,7 +90,8 @@ syscall_set_pgfault_handler(u_int envid, u_int func, u_int xstacktop)
 //
 // perm -- PTE_U | PTE_P must be set, PTE_AVAIL | PTE_W may or may not be set,
 //         but no other bits may be set.  See PTE_SYSCALL in inc/mmu.h.
-//
+//权限位PTE_U | PTE_P 必须被给予，PTE_AVAIL | PTE_W 给不给都可以，
+//但是不会有其他权限位
 // Return 0 on success, < 0 on error.  Errors are:
 //	-E_BAD_ENV if environment envid doesn't currently exist,
 //		or the caller doesn't have permission to change envid.
@@ -99,34 +100,40 @@ syscall_set_pgfault_handler(u_int envid, u_int func, u_int xstacktop)
 //	-E_NO_MEM if there's no memory to allocate the new page,
 //		or to allocate any necessary page tables.
 ```
-我一开始对这个函数有个小小的疑问，我们为何要辛辛苦苦地使用sys_mem_alloc而不使用我们第二次实验在pmap.c里面的
+关于所有权限位的解释与说明，我们可以参考MIT-JOS的注释，可以发现：
+```C
+#define PTE_P		0x001	// Present
+//PTE_P和我们的PTE_V的作用一致，表明一个页表项(或者页目录项)是有效的。
+
+#define PTE_W		0x002	// Writeable
+//PTE_W和我们的PTE_R的作用一致，表明该页表项对应的页是用户可写的。
+
+#define PTE_U		0x004	// User
+#define PTE_A		0x020	// Accessed
+#define PTE_D		0x040	// Dirty
+#define PTE_G		0x100	// Global
+#define PTE_COW		0x800	// Avail for system programmer's use
+
+// The PTE_AVAIL bits aren't used by the kernel or interpreted by the
+// hardware, so user processes are allowed to set them arbitrarily.
+#define PTE_AVAIL	0xE00	// Available for software use
+
+// Flags in PTE_SYSCALL may be used in system calls.  (Others may not.)
+#define PTE_SYSCALL	(PTE_AVAIL | PTE_P | PTE_W | PTE_U)
+```
+
+下面是我们实验中的权限位的设置
+```C
+#define PTE_G           0x0100  // Global bit
+#define PTE_V           0x0200  // Valid bit^M
+#define PTE_R           0x0400  // Dirty bit ,'0' means only read ,otherwise make interrupt
+#define PTE_D           0x0002  // fileSystem Cached is dirty
+#define PTE_COW         0x0001  // Copy On Write^M
+#define PTE_UC          0x0800  // unCached
+#define PTE_LIBRARY             0x0004  // share memmory
+```
+这里可以看到很多我们实验中没有见到的
 
 ```C
-int^M
-write(int fdnum, const void *buf, u_int n)^M
-{^M
-        int r;^M
-        struct Dev *dev;^M
-        struct Fd *fd;^M
-        //writef("write comes 1\n");^M
-        if ((r = fd_lookup(fdnum, &fd)) < 0^M
-        ||  (r = dev_lookup(fd->fd_dev_id, &dev)) < 0)^M
-                user_panic("write fail at 1.");
-//writef("write comes 2\n");^M
-        if ((fd->fd_omode & O_ACCMODE) == O_RDONLY) {^M
-                writef("[%08x] write %d -- bad mode\n", env->env_id, fdnum);^M
-                return -E_INVAL;^M
-        }
-//writef("write comes 3\n");
-        if (debug)
-            writef("write %d %p %d via dev %s\n",fdnum, buf, n, dev->dev_name);
-        writef("before r:%d\n",r);
-        r = (*dev->dev_write)(fd, buf, n, fd->fd_offset);
-        writef("after r:%d\n",r);
-        if (r > 0)
-                fd->fd_offset += r;
-//writef("write comes 4\n");
-        return 31;^M
-}^M
 
 ```
