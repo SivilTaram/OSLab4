@@ -291,24 +291,24 @@ if((perm & PTE_V) ==0)
 
         set_pgfault_handler(pgfault);
 
-        if((envid = syscall_env_alloc()) < 0)
+1.      if((envid = syscall_env_alloc()) < 0)
                 user_panic("syscall_env_alloc failed!");
 
         if(envid == 0)
         {
-                env = &envs[ENVX(syscall_getenvid())];
+2.              env = &envs[ENVX(syscall_getenvid())];
                 return 0;
         }
-        for(pn = 0; pn < ( UTOP / BY2PG) - 1 ; pn ++){
-                if(((*vpd)[pn/PTE2PT]) != 0 && ((*vpt)[pn]) != 0){
-                        duppage(envid, pn);
+3.      for(pn = 0; pn < ( UTOP / BY2PG) - 1 ; pn ++){
+4.              if(((*vpd)[pn/PTE2PT]) != 0 && ((*vpt)[pn]) != 0){
+5.                      duppage(envid, pn);
                 }
         }
-        if(syscall_mem_alloc(envid, UXSTACKTOP - BY2PG, PTE_V|PTE_R) < 0)
+6.      if(syscall_mem_alloc(envid, UXSTACKTOP - BY2PG, PTE_V|PTE_R) < 0)
                 user_panic("syscall_mem_alloc failed~!");
-        if(syscall_set_pgfault_handler(envid, __asm_pgfault_handler, UXSTACKTOP) < 0)
+7.      if(syscall_set_pgfault_handler(envid, __asm_pgfault_handler, UXSTACKTOP) < 0)
                 user_panic("syscall_set_pgfault_handler failed~!");
-        if(syscall_set_env_status(envid, ENV_RUNNABLE) < 0)
+8.      if(syscall_set_env_status(envid, ENV_RUNNABLE) < 0)
                 user_panic("syscall_set_env_status failed~!");
 
         return envid;
@@ -318,5 +318,22 @@ if((perm & PTE_V) ==0)
 这里的set_pgfault_handler其参数实际上是一个函数指针，即意味着pgfault是作为函数指针的参数传入set_pgfault_handler函数的。
 
 1. 这里的envid<0时出错，很简单，因为正常只会返回0和返回正整数值。
-2. 当envid==0时，表明当前 fork函数所在的进程为子进程，所以我们使用 `env = &envs[ENVX(syscall_getenvid())];`这里的env可是相当有来历，env是来自外部的`./user/libos.c`里的一个参数。实际上通过`entry.S`我们可以发现，在lab4整个实验中，真正的入口函数应当是从`libmain`开始的，_start叶函数执行完毕后就会跳转到`libmain`执行。`libmain`中实际上是让`env`指向我们当前的进程，然后才开始执行我们所使用的`fktest`或者`pingpong`中的umain来实验。这个`env`的作用是在进程通信的时候使用的。所以这里的这一步也必不可少。
-3. 这个地方值得注意的地方在于应该在 `pn<USTACKTOP/BY2PG`的地方进行duppage，否则我们将会把父进程的 [UXSTACKTOP-BY2PG,UXSTACKTOP] 地址空间同样duppage到 子进程的该地址空间上。而这个区域是页错误处理的栈区！这是因为在子进程中，如果父进程发生了页错误，那么使用`pgfault`处理时，会去访问异常栈并修改异常栈，但是由于异常栈是Copy-On-Write的，所以子进程中的异常栈被复制了一份父进程的异常栈，
+2. 当envid==0时，表明当前 fork函数所在的进程为子进程，所以我们使用`env=&envs[ENVX(syscall_getenvid())];`这里的env可是相当有来历，env是来自外部的`./user/libos.c`里的一个参数。实际上通过`entry.S`我们可以发现，在lab4整个实验中，真正的入口函数应当是从`libmain`开始的，_start叶函数执行完毕后就会跳转到`libmain`执行。`libmain`中实际上是让`env`指向我们当前的进程，然后才开始执行我们所使用的`fktest`或者`pingpong`中的umain来实验。这个`env`的作用是在进程通信的时候使用的。所以这里的这一步也必不可少。
+3. 这个地方值得注意的地方在于应该在`pn<USTACKTOP/BY2PG`的地方进行duppage，否则我们将会把父进程的[UXSTACKTOP-BY2PG,UXSTACKTOP] 地址空间同样duppage到子进程的该地址空间上，这个区域是页错误处理的栈区！我们为父进程和子进程分配的错误栈不应该是完全一致的，因为两个进程被调度的时机不同，所以不同时刻进行的程度不一，所以我们应为子进程新分配一个错误栈。  
+4. 这里的搜索原理其实挺复杂的，看一篇讲义称其为回环搜索，而我们的数组`vpd[]` 和 `vpt[]` 则是回环搜索的数组，我们首先来看一下这两个数组的作用注释：
+```C
+/*
+ * The page directory entry corresponding to the virtual address range
+ * [VPT, VPT + PTSIZE) points to the page directory itself.  Thus, the page
+ * directory is treated as a page table as well as a page directory.
+ * 虚拟地址[VPT,VPT + PTSIZE) 指向的是页目录自身(即自映射)，因此，页目录就像一个页表一样(查找页表的页表)
+ * One result of treating the page directory as a page table is that all PTEs
+ * can be accessed through a "virtual page table" at virtual address VPT (to
+ * which vpt is set in entry.S).  The PTE for page number N is stored in
+ * vpt[N].  (It's worth drawing a diagram of this!)
+ * vpt在entry.S里已经被置值为VPT
+ * A second consequence is that the contents of the current page directory
+ * will always be available at virtual address (VPT + (VPT >> PGSHIFT)), to
+ * which vpd is set in entry.S.
+ */
+```
