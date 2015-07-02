@@ -314,5 +314,9 @@ if((perm & PTE_V) ==0)
         return envid;
 	}
 ```
-
 首先`fork`函数中一开始要为父进程设置页错误处理函数为`pgfault`，这个`pgfault`其实就是上面所填的那个`pgfault`函数。
+这里的set_pgfault_handler其参数实际上是一个函数指针，即意味着pgfault是作为函数指针的参数传入set_pgfault_handler函数的。
+
+1. 这里的envid<0时出错，很简单，因为正常只会返回0和返回正整数值。
+2. 当envid==0时，表明当前 fork函数所在的进程为子进程，所以我们使用 `env = &envs[ENVX(syscall_getenvid())];`这里的env可是相当有来历，env是来自外部的`./user/libos.c`里的一个参数。实际上通过`entry.S`我们可以发现，在lab4整个实验中，真正的入口函数应当是从`libmain`开始的，_start叶函数执行完毕后就会跳转到`libmain`执行。`libmain`中实际上是让`env`指向我们当前的进程，然后才开始执行我们所使用的`fktest`或者`pingpong`中的umain来实验。这个`env`的作用是在进程通信的时候使用的。所以这里的这一步也必不可少。
+3. 这个地方值得注意的地方在于应该在 `pn<USTACKTOP/BY2PG`的地方进行duppage，否则我们将会把父进程的 [UXSTACKTOP-BY2PG,UXSTACKTOP] 地址空间同样duppage到 子进程的该地址空间上。而这个区域是页错误处理的栈区！这是因为在子进程中，如果父进程发生了页错误，那么使用`pgfault`处理时，会去访问异常栈并修改异常栈，但是由于异常栈是Copy-On-Write的，所以子进程中的异常栈被复制了一份父进程的异常栈，
