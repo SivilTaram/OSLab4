@@ -255,14 +255,13 @@ if((perm & PTE_V) ==0)
 2.将当前的环境中的所有寄存器的状态全部保存在child->env_tf中，这一步相当于为子进程配置了和父进程完全一眼的进程上下文。  
 3.在fork结束之前我们不能将子进程状态设置为RUNNABLE，因为我们还将在父进程中为子进程复制一些资源以及处理一些东西。  
 4.这里child->env_pgfault_handler其实为0或者为其他均可，因为在子进程实际启动前我们会主动为子进程设置一个页错误处理函数。  
-5&6. 5和6搭配才能可以完整地表明为什么在fork函数中使用如下语句：`envid = sys_env_alloc()` 、时envid会有两个值，一个为0，一个非0。事实上是这样，在fork函数里，在父进程运行到 `envid = sys_env_alloc`这句话时，实际上变成底层语言，是如下的一个过程：
+5&6. 5和6搭配才能可以完整地表明为什么在fork函数中使用如下语句：`envid = sys_env_alloc()`时envid会有两个值，一个为0，一个非0。事实上是这样，在fork函数里，在父进程运行到 `envid = sys_env_alloc`这句话时，实际上变成底层语言，是如下的一个过程：
 ```C
 	sys_env_alloc() -> eax(v0)
 	eax -> envid
 ```
 我们首先要运行`sys_env_alloc()`函数，其返回值放在了eax寄存器，在mips中称之为v0寄存器，即regs[2]。然后下一步是将eax寄存器中的值赋给envid。
-我们再返回来看一下5&6两句，可以发现，一个是设置子进程的pc为child->env_tf.cp0_epc，我们知道此时child->env_tf.cp0_epc实际上和父进程的cp0_epc是一样的，所以实际上当子进程被调度时，子进程运行的第一条指令实际上是代码段中`sys_env_alloc()`返回后的第一条指令，即 `eax -> envid `，又因为我们另一条语句已经设置子进程的eax(v0)寄存器的值为0，所以在子进程中，envid的值是0。
-
+我们再返回来看一下5&6两句，可以发现，一个是设置子进程的pc为child->env_tf.cp0_epc，我们知道此时child->env_tf.cp0_epc实际上和父进程的cp0_epc是一样的，所以实际上当子进程被调度时，子进程运行的第一条指令实际上是代码段中`sys_env_alloc()`返回后的第一条指令，即 `eax -> envid `，又因为我们另一条语句已经设置子进程的eax(v0)寄存器的值为0，所以在子进程中，envid的值是0。  
 7. 由于在子进程中返回0，所以为了容易区分两者，在父进程中返回子进程的ID。
 
 ###sys_set_env_status###
@@ -275,9 +274,118 @@ if((perm & PTE_V) ==0)
 
 后面两个系统调用和通信有关，等写完fork之后再叙述。
 
-了解了这个函数，就可以直接讲`fork`的机制了
+了解了这个函数，就可以直接讲`fork`的机制了  
 
 ##fork##
+
+在讲`fork`的机制之前，首先要谈一下关于函数`pgfault`和函数`duppage`的填写及其作用。  
+
+###pgfault###
+
+
+```C
+// Custom page fault handler - if faulting page is copy-on-write,
+// map in our own private writable copy.
+// 如果缺页是copy-on-write的，那么则把它复制一份给子进程。(so...)
+```  
+通过注释的阅读，可以发现`pgfault`实际上就是一个处理页错误时拥有copy-on-write的页的问题的，正常的缺页中断的处理都是有@@@pageout@@@的标识，然后通过tlb进行补页的。那么来细细观察一下`pgfault`的结构：
+
+```C
+static void
+pgfault(u_int va)
+{
+        int r;
+        int i;
+        va = ROUNDDOWN(va, BY2PG);
+        
+1.      if (!((*vpt)[VPN(va)] & PTE_COW ))
+                user_panic("PTE_COW failed!");
+                
+2.      if (syscall_mem_alloc(0, PFTEMP, PTE_V|PTE_R) < 0)
+                user_panic("syscall_mem_alloc failed!");
+                
+3.      user_bcopy((void*)va, PFTEMP, BY2PG);
+        
+4.      if (syscall_mem_map(0, PFTEMP, 0, va, PTE_V|PTE_R) < 0)
+                user_panic("syscall_mem_map failed!");
+                
+5.      if (syscall_mem_unmap(0, PFTEMP) < 0)
+                user_panic("syscall_mem_unmap failed!");
+}
+```
+首先要搞清楚哪个是父进程的地址空间，哪个又是子进程的地址空间，参考MIT的注释可以得到如下助攻：
+
+```C
+	// Allocate a new page, map it at a temporary location (PFTEMP),
+	// copy the data from the old page to the new page, then move the new
+	// page to the old page's address.
+	// Hint:
+	//   You should make three system calls.
+	//   No need to explicitly delete the old page's mapping.
+	// 分配一页，把它映射到一个临时位置(PFTEMP)，把旧页的数据拷到新页去，然后把新页再移到旧页的地址上去。
+	// 提示:
+	// 你应当使用三个系统调用，无需显式删除旧页的映射。(实际上在page_insert里已经做了解除映射)
+```
+1. 这句话就是在判断需要处理的页究竟是不是Copy-on-write的，如果不是的话将会报错。这里的`*vpt`是回环搜索，稍后会讲到
+2. 在PFTEMP处新申请了一页，并且这里调用系统服务时使用的`envid=0`，这是在`envid2env`中的设定，如果传入的id=0时表示当前进程，所以即是在当前进程的PFTEMP处新申请了一页。  
+3. 将va处的一页的内容拷贝到PFTEMP处。  
+4. 将PFTEMP处的页作为新的一页(意思就是va旧页的内容作为新页)插入到va所对应的虚拟地址处。  
+5. 解除PFTEMP到刚刚va所对应的页的映射，否则下一次用的时候可能会有问题(重叠与覆盖)
+
+其实我们写完就能发现，实际上我们所做的事情是很玄妙的，这时候达到的效果就是只有子进程的`va`可以找到曾经的那个Copy-on-write的页了！而且我们可以看到，不论是在alloc还是在map的时候这页都会加上写权限，并且不会加Copy-on-write。而PFTEMP=Pgfault Temp，实际上用来倒换新旧页，我们想在改变权限的情况下将copy-on-write的那页重新弄到父进程相同的地址并且不能破坏子进程的原先页的属性，所以就巧妙了用了这样的机制。
+
+###duppage###
+
+说到这个函数我真是服了，关于系统调用的那个bug还没有解决，不过这个函数虽然填写很坑，但是其内容还是比较有趣的，而且有一些很厉害的东西一直埋伏着，一直到lab6给了我当头一棒，23333.  
+
+首先来看看`duppage`的注释：
+```C
+// Map our virtual page pn (address pn*PGSIZE) into the target envid
+// at the same virtual address.  If the page is writable or copy-on-write,
+// the new mapping must be created copy-on-write, and then our mapping must be
+// marked copy-on-write as well.  (Exercise: Why do we need to mark ours
+// copy-on-write again if it was already copy-on-write at the beginning of
+// this function?)
+// 把虚拟页号 pn 映射到目标进程envid 的同样虚拟地址。
+//
+// Returns: 0 on success, < 0 on error.
+// It is also OK to panic on error
+```
+```C
+inline static void
+duppage(u_int envid, u_int pn)
+{
+        int r;
+        u_int addr;
+        Pte pte;
+        u_int perm;
+
+0.      perm = ((*vpt)[pn]) & 0xfff;
+
+1.      if( (perm & PTE_R)!= 0 || (perm & PTE_COW)!= 0)
+        {
+2.        	if(perm & PTE_LIBRARY) {
+                    perm = perm | PTE_V | PTE_R;
+                }
+                else{
+                    perm = perm | PTE_V | PTE_R | PTE_COW;
+                }
+
+3.              if(syscall_mem_map(0, pn * BY2PG, envid, pn * BY2PG, perm) == -1)
+                        user_panic("duppage failed at 1");
+
+4.              if(syscall_mem_map(0, pn * BY2PG, 0, pn * BY2PG, perm) == -1)
+                        user_panic("duppage failed at 2");
+        }
+        else{
+5.              if(syscall_mem_map(0, pn * BY2PG,envid, pn * BY2PG, perm) == -1)
+                        user_panic("duppage failed at 3");
+        }
+}
+```
+0. 依旧回环搜索QAQ，得到权限位(页框为20位，后12位是权限位)  
+1. duppage的含义在于
+2. zheyi
 
 `fork`中我写的源码如下：
 ```C
@@ -289,7 +397,7 @@ if((perm & PTE_V) ==0)
         extern struct Env *envs;
         extern struct Env *env;
 
-        set_pgfault_handler(pgfault);
+0.      set_pgfault_handler(pgfault);
 
 1.      if((envid = syscall_env_alloc()) < 0)
                 user_panic("syscall_env_alloc failed!");
@@ -314,8 +422,31 @@ if((perm & PTE_V) ==0)
         return envid;
 	}
 ```
-首先`fork`函数中一开始要为父进程设置页错误处理函数为`pgfault`，这个`pgfault`其实就是上面所填的那个`pgfault`函数。
+0. `fork`函数中一开始要为父进程设置页错误处理函数为`pgfault`，这个`pgfault`其实就是上面所填的那个`pgfault`函数。
 这里的set_pgfault_handler其参数实际上是一个函数指针，即意味着pgfault是作为函数指针的参数传入set_pgfault_handler函数的。
+来观察一下这个函数，就可以知道其作用了：
+
+```C
+void
+set_pgfault_handler(void (*fn)(u_int va, u_int err))
+{
+        int r;  
+        if (__pgfault_handler == 0) {
+                // Your code here:^M
+                // map one page of exception stack with top at UXSTACKTOP
+                // register assembly handler and stack with operating system
+                // 为异常栈(栈顶为UXSTACKTOP)分配一页，在操作系统中注册错误处理函数和栈。
+                if(syscall_mem_alloc(0, UXSTACKTOP - BY2PG, PTE_V|PTE_R)<0 || syscall_set_pgfault_handler(0, __asm_pgfault_handler, UXSTACKTOP)<0)
+                {
+                        writef("cannot set pgfault handler\n");
+                        return;
+                }
+        }
+        // Save handler pointer for assembly to call.
+        __pgfault_handler = fn;
+}
+```
+这里值得注意的一点就是因为set_pgfault_handler是个用户态的处理函数(因为注册的是用户栈)，所以只能使用syscall开头的系统调用服务。其实能看出，这个函数和系统调用`syscall_set_pgfault_handler`不同之处在于该函数会判断当前的错误处理函数是否为空。所以我们只能对父进程使用该函数，而对子进程一定要新建错误栈并通过系统调用来注册。  
 
 1. 这里的envid<0时出错，很简单，因为正常只会返回0和返回正整数值。
 2. 当envid==0时，表明当前 fork函数所在的进程为子进程，所以我们使用`env=&envs[ENVX(syscall_getenvid())];`这里的env可是相当有来历，env是来自外部的`./user/libos.c`里的一个参数。实际上通过`entry.S`我们可以发现，在lab4整个实验中，真正的入口函数应当是从`libmain`开始的，_start叶函数执行完毕后就会跳转到`libmain`执行。`libmain`中实际上是让`env`指向我们当前的进程，然后才开始执行我们所使用的`fktest`或者`pingpong`中的umain来实验。这个`env`的作用是在进程通信的时候使用的。所以这里的这一步也必不可少。
@@ -331,7 +462,7 @@ if((perm & PTE_V) ==0)
  * can be accessed through a "virtual page table" at virtual address VPT (to
  * which vpt is set in entry.S).  The PTE for page number N is stored in
  * vpt[N].  (It's worth drawing a diagram of this!)
- * vpt在entry.S里已经被置值为VPT
+ * vpt在entry.S里已经被置值为VPT。
  * A second consequence is that the contents of the current page directory
  * will always be available at virtual address (VPT + (VPT >> PGSHIFT)), to
  * which vpd is set in entry.S.
