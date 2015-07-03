@@ -383,13 +383,12 @@ duppage(u_int envid, u_int pn)
         }
 }
 ```
-0. 依旧回环搜索，得到权限位(页框号为20位，后12位是权限位)  
-1&2. duppage的含义在于将父进程的所有可以的映射按同样的方式映射在子进程中，但是对于不同的页要有不同的处理方式。在父进程中可写的或者是符合Copy-on-write机制的页，如果是父子进程共享的(LIBRARY)，那么我们就不需要Copy-on-write，但是如果父子进程不可以完全共享的，那么需要为其加上PTE_COW的标志，以便于之后Copy-on-write时使用pgfault进行处理。  
-3&4. 因为之前修改了权限位，所以在if条件之后我们需要对父子进程都进行重新映射，映射的地址是pn*BY2PG，同样这里使用到了传入envid=0时代表父进程的一个特性。  
+--0. 依旧回环搜索，得到权限位(页框号为20位，后12位是权限位)  
+1-2. duppage的含义在于将父进程的所有可以的映射按同样的方式映射在子进程中，但是对于不同的页要有不同的处理方式。在父进程中可写的或者是符合Copy-on-write机制的页，如果是父子进程共享的(LIBRARY)，那么我们就不需要Copy-on-write，但是如果父子进程不可以完全共享的，那么需要为其加上PTE_COW的标志，以便于之后Copy-on-write时使用pgfault进行处理。  
+3-4. 因为之前修改了权限位，所以在if条件之后我们需要对父子进程都进行重新映射，映射的地址是pn*BY2PG，同样这里使用到了传入envid=0时代表父进程的一个特性。  
 这里有个很有意思的问题，我们在映射要先映射父进程还是先映射子进程呢？
 这里父子的先后关系可以直接决定程序是否正确，应该是要先映射子进程，再对父进程自己进行覆盖映射。原因是这样，如果先映射父进程的话，就对父进程中的`pn*BY2PG`的权限位进行了修改，对于fork应当是不要紧的，但是对于进程通信应该会造成比较大的影响。  
-
-5. 这里没有修改权限，表示父进程中该页时只读的或者不是Copy-on-write的，那么则以原先的映射映到子进程即可。
+--5. 这里没有修改权限，表示父进程中该页时只读的或者不是Copy-on-write的，那么则以原先的映射映到子进程即可。
 
 ###fork###
 `fork`中我写的源码如下：
@@ -427,7 +426,7 @@ duppage(u_int envid, u_int pn)
         return envid;
 	}
 ```
-0. `fork`函数中一开始要为父进程设置页错误处理函数为`pgfault`，这个`pgfault`其实就是上面所填的那个`pgfault`函数。
+在0. `fork`函数中一开始要为父进程设置页错误处理函数为`pgfault`，这个`pgfault`其实就是上面所填的那个`pgfault`函数。
 这里的set_pgfault_handler其参数实际上是一个函数指针，即意味着pgfault是作为函数指针的参数传入set_pgfault_handler函数的。
 来观察一下这个函数，就可以知道其作用了：
 
@@ -559,8 +558,8 @@ recv比较好写，recv就是在等待接收别的进程发送的消息，如果
   + env_ipc_recving is set to 0 to block future sends;
   + env_ipc_from is set to the sending envid;
   + env_ipc_value is set to the 'value' parameter;
-  + env_ipc_perm is set to 'perm' if a page was transferred
-值得注意的地方在于这个函数的返回值，很多同学之前都是`return ret`，ret应当是判断`perm`是否要使用的一个参量而已，如果要共享内存，则`ret=1`,如果没有共享内存的话，则`ret=0`，仅此而已，所以在最后只要`return 0`即可，不需要有别的修饰。  
+  + env_ipc_perm is set to 'perm' if a page was transferred    
+  值得注意的地方在于这个函数的返回值，很多同学之前都是`return ret`，ret应当是判断`perm`是否要使用的一个参量而已，如果要共享内存，则`ret=1`,如果没有共享内存的话，则`ret=0`，仅此而已，所以在最后只要`return 0`即可，不需要有别的修饰。  
 
 ##总结##
 lab4其实还有很多地方没有搞得特别清楚，也有很多地方没有讲到，可能随之时间的积淀哪一天会突然有所感悟，哦原来是这样！  
