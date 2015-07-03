@@ -383,10 +383,15 @@ duppage(u_int envid, u_int pn)
         }
 }
 ```
-0. 依旧回环搜索QAQ，得到权限位(页框为20位，后12位是权限位)  
-1. duppage的含义在于
-2. zheyi
+0. 依旧回环搜索，得到权限位(页框号为20位，后12位是权限位)  
+1&2. duppage的含义在于将父进程的所有可以的映射按同样的方式映射在子进程中，但是对于不同的页要有不同的处理方式。在父进程中可写的或者是符合Copy-on-write机制的页，如果是父子进程共享的(LIBRARY)，那么我们就不需要Copy-on-write，但是如果父子进程不可以完全共享的，那么需要为其加上PTE_COW的标志，以便于之后Copy-on-write时使用pgfault进行处理。  
+3&4. 因为之前修改了权限位，所以在if条件之后我们需要对父子进程都进行重新映射，映射的地址是pn*BY2PG，同样这里使用到了传入envid=0时代表父进程的一个特性。  
+这里有个很有意思的问题，我们在映射要先映射父进程还是先映射子进程呢？
+这里父子的先后关系可以直接决定程序是否正确，应该是要先映射子进程，再对父进程自己进行覆盖映射。原因是这样，如果先映射父进程的话，就对父进程中的`pn*BY2PG`的权限位进行了修改，对于fork应当是不要紧的，但是对于进程通信应该会造成比较大的影响。  
 
+5. 这里没有修改权限，表示父进程中该页时只读的或者不是Copy-on-write的，那么则以原先的映射映到子进程即可。
+
+###fork###
 `fork`中我写的源码如下：
 ```C
 	int fork(void)
@@ -460,11 +465,94 @@ set_pgfault_handler(void (*fn)(u_int va, u_int err))
  * 虚拟地址[VPT,VPT + PTSIZE) 指向的是页目录自身(即自映射)，因此，页目录就像一个页表一样(查找页表的页表)
  * One result of treating the page directory as a page table is that all PTEs
  * can be accessed through a "virtual page table" at virtual address VPT (to
- * which vpt is set in entry.S).  The PTE for page number N is stored in
- * vpt[N].  (It's worth drawing a diagram of this!)
- * vpt在entry.S里已经被置值为VPT。
- * A second consequence is that the contents of the current page directory
- * will always be available at virtual address (VPT + (VPT >> PGSHIFT)), to
- * which vpd is set in entry.S.
+ * which vpt is set in entry.S).  The PTE for page number N is stored in vpt[N].
+   通过页表的虚拟地址在虚拟地址'VPT'(vpt在entry.S里定义),虚拟页号N对应页表的地址存储在vpt[N]
  */
+```
+实际上回环搜索的作用是，给定一个虚拟地址，我们可以构造出其页目录项和页表表项。假设我们要查询的虚拟地址为
+`va = PDX | PTX | OFFSET`
+要得到对应的页目录项: `vaddr = UVPT[31:22] | UVPT[31:22] | PDX | 00;`
+得到对应的页表项: `vaddr = UVPT[31:22] | PDX | PTX | 00;`
+实际上我们的`vpt`和`vpd`就是发挥了这样的作用，vpt记载的是对应的页表项，vpd记载的是对应的页目录项，但是这里有一点特殊的地方在于，我们需要使用 `*vpt` 和 `*vpd` 来找，因为在`entry.S`中有如下定义：
+```C
+	.globl vpt
+vpt:
+        .word UVPT
+        .globl vpd
+vpd:
+        .word (UVPT+(UVPT>>12)*4)
+```
+实际上vpt是UVPT的一个指针，那么实际上vpt里存着UVPT的首地址，即`*vpt=UVPT`，所以`(*vpt)[N] = UVPT[N]`。
+5. duppage 复制父进程的映射到子进程。  
+
+6&7&8. 6\7\8三个步骤都是只在父进程里所做的，其为子进程申请了一个新的错误栈，并且注册了错误处理函数，然后将子进程的状态设置为RUNNABLE，子进程就可以参与调度了。注意RUNNABLE应该是只能在父进程结束的末尾来做，否则可能会出现资源没有配置好，子进程就参与调度的情况出现。
+
+##进程通信##
+
+其实我们这次的进程通信只是发消息，没有涉及到共享内存的书写，所以看起来还是比较好写。
+
+###sys_ipc_can_send###
+
+```C
+void sys_ipc_recv(int sysno,u_int dstva)
+{
+        if ((unsigned)dstva >= UTOP || dstva != ROUNDDOWN(dstva, BY2PG)){
+                return -E_INVAL ;
+        }
+
+        curenv->env_ipc_dstva = dstva;
+        curenv->env_ipc_recving = 1;
+
+        //Mark Curenv ENV_NOT_RUNNABLE and Give Up CPU
+        curenv->env_status = ENV_NOT_RUNNABLE;
+        sys_yield();
+
+}
+```
+recv比较好写，recv就是在等待接收别的进程发送的消息，如果别人发出的消息可以被接收到的话就会调用`sys_ipc_recv`来接收消息，所以循环阻塞等待这一点是在ipc.c里面完成的，和我们的系统调用没有半毛钱关系。那么`sys_ipc_recv`里我们需要置一些消息位，同时将`env_ipc_recving=1`，以表明自己已经收到了。比较坑的点可能在最后的调度上，调度要使用系统调用的调度函数，不能直接使用`sched_yield`，因为我们这次系统调用在`Kernel_sp`处保存进程上下文信息，所以调度一个进程时需要从那里获取上下文。  
+不过比较搞笑，lab4在`ipc.c`里面居然没有调用这个函数，而是直接就阻塞等待，真是有意思。。。
+
+###sys_ipc_can_send###
+
+这个系统调用是个大家伙，需要慎重对待。
+
+```C
+// Try to send 'value' to the target env 'envid'.
+// If srcva < UTOP, then also send page currently mapped at 'srcva',
+// so that receiver gets a duplicate mapping of the same page.
+//
+// The send fails with a return value of -E_IPC_NOT_RECV if the
+// target is not blocked, waiting for an IPC.
+//
+// The send also can fail for the other reasons listed below.
+//
+// Otherwise, the send succeeds, and the target's ipc fields are
+// updated as follows:
+//    env_ipc_recving is set to 0 to block future sends;
+//    env_ipc_from is set to the sending envid;
+//    env_ipc_value is set to the 'value' parameter;
+//    env_ipc_perm is set to 'perm' if a page was transferred, 0 otherwise.
+// The target environment is marked runnable again, returning 0
+// from the paused sys_ipc_recv system call.  (Hint: does the
+// sys_ipc_recv function ever actually return?)
+//
+// If the sender wants to send a page but the receiver isn't asking for one,
+// then no page mapping is transferred, but no error occurs.
+// The ipc only happens when no errors occur.
+//
+// Returns 0 on success, < 0 on error.
+// Errors are:
+//	-E_BAD_ENV if environment envid doesn't currently exist.
+//		(No need to check permissions.)
+//	-E_IPC_NOT_RECV if envid is not currently blocked in sys_ipc_recv,
+//		or another environment managed to send first.
+//	-E_INVAL if srcva < UTOP but srcva is not page-aligned.
+//	-E_INVAL if srcva < UTOP and perm is inappropriate
+//		(see sys_page_alloc).
+//	-E_INVAL if srcva < UTOP but srcva is not mapped in the caller's
+//		address space.
+//	-E_INVAL if (perm & PTE_W), but srcva is read-only in the
+//		current environment's address space.
+//	-E_NO_MEM if there's not enough memory to map srcva in envid's
+//		address space.
 ```
