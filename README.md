@@ -1,5 +1,5 @@
 # OSLab4
-BUAA OSLab4
+BUAA OSLab4 乾
 ##实验概况##
 ***
   在开始实验之前，先对实验整体有个大概的了解，这样能让我们更好地进行实验。
@@ -469,9 +469,9 @@ set_pgfault_handler(void (*fn)(u_int va, u_int err))
    通过页表的虚拟地址在虚拟地址'VPT'(vpt在entry.S里定义),虚拟页号N对应页表的地址存储在vpt[N]
  */
 ```
-实际上回环搜索的作用是，给定一个虚拟地址，我们可以构造出其页目录项和页表表项。假设我们要查询的虚拟地址为
-`va = PDX | PTX | OFFSET`
-要得到对应的页目录项: `vaddr = UVPT[31:22] | UVPT[31:22] | PDX | 00;`
+实际上回环搜索的作用是，给定一个虚拟地址，我们可以构造出其页目录项和页表表项。假设我们要查询的虚拟地址为  
+`va = PDX | PTX | OFFSET`  
+要得到对应的页目录项: `vaddr = UVPT[31:22] | UVPT[31:22] | PDX | 00;`  
 得到对应的页表项: `vaddr = UVPT[31:22] | PDX | PTX | 00;`
 实际上我们的`vpt`和`vpd`就是发挥了这样的作用，vpt记载的是对应的页表项，vpd记载的是对应的页目录项，但是这里有一点特殊的地方在于，我们需要使用 `*vpt` 和 `*vpd` 来找，因为在`entry.S`中有如下定义：
 ```C
@@ -482,10 +482,9 @@ vpt:
 vpd:
         .word (UVPT+(UVPT>>12)*4)
 ```
-实际上vpt是UVPT的一个指针，那么实际上vpt里存着UVPT的首地址，即`*vpt=UVPT`，所以`(*vpt)[N] = UVPT[N]`。
-5. duppage 复制父进程的映射到子进程。  
-
-6&7&8. 6\7\8三个步骤都是只在父进程里所做的，其为子进程申请了一个新的错误栈，并且注册了错误处理函数，然后将子进程的状态设置为RUNNABLE，子进程就可以参与调度了。注意RUNNABLE应该是只能在父进程结束的末尾来做，否则可能会出现资源没有配置好，子进程就参与调度的情况出现。
+实际上vpt是UVPT的一个指针，那么实际上vpt里存着UVPT的首地址，即`*vpt=UVPT`，所以`(*vpt)[N] = UVPT[N]`。  
+5. duppage 复制父进程的映射到子进程。    
+6&7&8. 6、7、8三个步骤都是只在父进程里所做的，其为子进程申请了一个新的错误栈，并且注册了错误处理函数，然后将子进程的状态设置为RUNNABLE，子进程就可以参与调度了。注意RUNNABLE应该是只能在父进程结束的末尾来做，否则可能会出现资源没有配置好，子进程就参与调度的情况出现。
 
 ##进程通信##
 
@@ -556,3 +555,16 @@ recv比较好写，recv就是在等待接收别的进程发送的消息，如果
 //	-E_NO_MEM if there's not enough memory to map srcva in envid's
 //		address space.
 ```
+确实需要的东西比较多，简略一点说就是如下几点：
+  + env_ipc_recving is set to 0 to block future sends;
+  + env_ipc_from is set to the sending envid;
+  + env_ipc_value is set to the 'value' parameter;
+  + env_ipc_perm is set to 'perm' if a page was transferred
+值得注意的地方在于这个函数的返回值，很多同学之前都是`return ret`，ret应当是判断`perm`是否要使用的一个参量而已，如果要共享内存，则`ret=1`,如果没有共享内存的话，则`ret=0`，仅此而已，所以在最后只要`return 0`即可，不需要有别的修饰。  
+
+##总结##
+lab4其实还有很多地方没有搞得特别清楚，也有很多地方没有讲到，可能随之时间的积淀哪一天会突然有所感悟，哦原来是这样！  
+
+哦，原来是这样！  
+乾 2015/7/3
+  
